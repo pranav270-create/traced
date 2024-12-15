@@ -39,19 +39,27 @@ def run_frontend(port):
     httpd = socketserver.TCPServer(("", port), Handler)
     httpd.serve_forever()
 
+def check_ui_dependencies():
+    try:
+        import fastapi
+        import uvicorn
+    except ImportError:
+        click.echo("UI dependencies not found. Please install with: pip install traced[ui]")
+        sys.exit(1)
+
 @cli.command()
 @click.option('--backend-port', default=8000, help='Port for the backend server')
 @click.option('--frontend-port', default=3000, help='Port for the frontend server')
 @click.option('--db-url', 
               envvar=TRACED_DATABASE_URL,
-              help='Database URL. Can also be set via TRACED_DATABASE_URL environment variable. '
-                   'Example: postgresql+asyncpg://user:password@localhost:5432/experiment_logs')
+              help='Database URL. Can also be set via TRACED_DATABASE_URL environment variable.')
 @click.option('--db-type', 
               type=click.Choice(['postgresql', 'mysql']), 
               default='postgresql',
               help='Database type to use if no URL is provided')
-def startup(backend_port: int, frontend_port: int, db_url: Optional[str], db_type: str):
-    """Start both backend and frontend servers"""
+def ui(backend_port: int, frontend_port: int, db_url: Optional[str], db_type: str):
+    """Start the Traced UI (frontend + backend servers)"""
+    check_ui_dependencies()
     
     # If no db_url is provided, use default local database URL based on db_type
     if not db_url:

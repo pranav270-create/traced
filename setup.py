@@ -16,96 +16,96 @@ def package_files(directory):
 # Get frontend files
 frontend_files = package_files('traced/frontend/build')
 
-class PreInstallCommand(install):
-    """Pre-installation for installation mode."""
-    def run(self):
+def build_frontend():
+    """Build frontend if the directory exists."""
+    if os.path.exists('traced/frontend'):
         try:
             subprocess.check_call(['npm', 'install'], cwd='traced/frontend')
             subprocess.check_call(['npm', 'run', 'build'], cwd='traced/frontend')
+            return True
         except subprocess.CalledProcessError as e:
             print("Warning: Failed to build frontend. UI may not be available.")
             print(e)
+    return False
+
+class PreInstallCommand(install):
+    """Pre-installation for installation mode."""
+    def run(self):
+        build_frontend()
         install.run(self)
 
 class PreDevelopCommand(develop):
     """Pre-installation for development mode."""
     def run(self):
-        try:
-            subprocess.check_call(['npm', 'install'], cwd='traced/frontend')
-            subprocess.check_call(['npm', 'run', 'build'], cwd='traced/frontend')
-        except subprocess.CalledProcessError as e:
-            print("Warning: Failed to build frontend. UI may not be available.")
-            print(e)
+        build_frontend()
         develop.run(self)
 
 setup(
     name="traced",
-    version="0.1.0",
+    version="0.1.4",
     packages=find_packages(),
     include_package_data=True,
     package_data={
-        'traced': frontend_files + ['frontend/build/*', 'frontend/build/**/*']
+        'traced': ['frontend/build/**/*'] if os.path.exists('traced/frontend/build') else []
     },
     install_requires=[
-        # Core dependencies
+        # Core SQL and async support
         "sqlalchemy>=2.0.0",
-        "aioboto3>=11.0.0",
-        "numpy>=1.21.0",
-        "termcolor>=2.0.0",
-        "gitpython>=3.1.0",
+        "sqlalchemy[asyncio]>=2.0.0",
         
-        # FastAPI and related
-        "fastapi>=0.68.0",
-        "uvicorn>=0.15.0",
-        "websockets>=10.0",  # For WebSocket support
-        "python-multipart>=0.0.5",  # For form data
-        
-        # CLI
-        "click>=8.0.0",
-        
-        # Database
-        "sqlalchemy[asyncio]>=2.0.0",  # Async support
-        "aiosqlite>=0.17.0",  # Async SQLite
-        "asyncpg>=0.27.0",  # Async PostgreSQL
-        
-        # Utilities
-        "python-dateutil>=2.8.2",
+        # Core utilities
         "pydantic>=1.8.0",
         "typing-extensions>=4.0.0",
-        "aiohttp>=3.8.0",
-        "difflib3>=0.1.0",  # For difflib support
-        
-        # Git support
-        "gitpython>=3.1.0",  # Already had this one
-        
-        # Core Python enhancements
-        "dataclasses>=0.8;python_version<'3.7'",  # For Python < 3.7
-        "typing-extensions>=4.0.0",  # Already had this
-        
-        # Async support
-        "asyncio>=3.4.3",  # For Python < 3.7
-        "aioboto3>=11.0.0",  # Already had this
+        "python-dateutil>=2.8.2",
         
         # Logging and output
-        "termcolor>=2.0.0",  # Already had this
+        "termcolor>=2.0.0",
         
-        # Utilities
-        "python-dateutil>=2.8.2",  # Already had this
-        "hashlib>=20081119" if sys.version_info < (3, 6) else "",  # Only if needed
+        # Git integration
+        "gitpython>=3.1.0",
         
-        # Database
-        "sqlalchemy[asyncio]>=2.0.0",  # Already had this
-        "asyncpg>=0.27.0",  # Already had this
-        
-        # Numpy for sampling
-        "numpy>=1.21.0",  # Already had this
+        # Numpy for core operations
+        "numpy>=1.21.0",
+
+        # AWS
+        "aioboto3>=11.0.0",
     ],
-    entry_points={
-        'console_scripts': [
-            'traced=traced.cli.commands:cli',
-        ],
-    },
     extras_require={
+        # UI Components (frontend + backend)
+        'ui': [
+            # Backend
+            "fastapi>=0.68.0",
+            "uvicorn>=0.15.0",
+            "websockets>=10.0",
+            "python-multipart>=0.0.5",
+            "click>=8.0.0",  # For CLI commands
+            "aiohttp>=3.8.0",
+            
+            # Frontend dependencies will be handled by npm during install
+        ],
+        
+        # Database Drivers
+        'postgresql': [
+            'asyncpg>=0.27.0',
+            'psycopg2-binary>=2.9.0',
+        ],
+        'mysql': [
+            'aiomysql>=0.1.1',
+            'mysqlclient>=2.0.0',
+        ],
+        
+        # AWS Integration
+        'aws': [
+            "aioboto3>=11.0.0",
+        ],
+        
+        # Data Processing
+        'data': [
+            "numpy>=1.21.0",
+            "difflib3>=0.1.0",
+        ],
+        
+        # Development Tools
         'dev': [
             'pytest>=6.0',
             'pytest-asyncio>=0.14.0',
@@ -115,26 +115,41 @@ setup(
             'flake8>=3.9.0',
             'pytest-cov>=2.12.0',
         ],
+        
+        # Documentation
         'docs': [
             'sphinx>=4.0.0',
             'sphinx-rtd-theme>=0.5.0',
             'sphinx-autodoc-typehints>=1.12.0',
         ],
-        'mysql': [
-            'aiomysql>=0.1.1',  # Async MySQL
-            'mysqlclient>=2.0.0',  # Sync MySQL (if needed)
-        ],
-        'postgresql': [
-            'asyncpg>=0.27.0',  # Already in main requirements, but listed here for clarity
-            'psycopg2-binary>=2.9.0',  # Sync PostgreSQL (if needed)
+        
+        # Full installation (everything except dev tools)
+        'full': [
+            "fastapi>=0.68.0",
+            "uvicorn>=0.15.0",
+            "websockets>=10.0",
+            "python-multipart>=0.0.5",
+            "click>=8.0.0",
+            "aiohttp>=3.8.0",
+            'asyncpg>=0.27.0',
+            'psycopg2-binary>=2.9.0',
+            'aiomysql>=0.1.1',
+            "aioboto3>=11.0.0",
+            "numpy>=1.21.0",
+            "difflib3>=0.1.0",
         ],
     },
-    author="Your Name",
-    author_email="your.email@example.com",
+    entry_points={
+        'console_scripts': [
+            'traced=cli.commands:cli',
+        ],
+    },
+    author="Pranav Iyer",
+    author_email="pranaviyer2@gmail.com",
     description="A tracing library for Python functions with experiment tracking",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/traced",
+    url="https://github.com/pranav270-create/traced",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

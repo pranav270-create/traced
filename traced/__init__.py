@@ -12,7 +12,7 @@ from .core.context import (
     current_project_id,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.4"
 
 __all__ = [
     "init_logger",
