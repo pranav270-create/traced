@@ -1174,6 +1174,7 @@ class Logger:
 # Global logger instances
 _default_logger: Optional[Logger] = None
 _current_project: Optional[str] = None
+_default_sample_prob: float = 1.0
 
 
 def init_logger(
@@ -1182,7 +1183,8 @@ def init_logger(
     s3_bucket: Optional[str] = None,
     s3_region: Optional[str] = None,
     pool_config: Optional[PoolConfig] = None,
-    experiment: Optional[str] = None,  # This is now treated as experiment_name
+    experiment: Optional[str] = None,
+    sample_prob: Optional[float] = None,
 ) -> Logger:
     """
     Initialize the global logger with project configuration.
@@ -1190,11 +1192,28 @@ def init_logger(
     Args:
         project: Project name/id
         experiment: Experiment name (optional). If provided, creates an experiment and sets it as current
+        sample_prob: Global sampling probability (0.0 to 1.0). Can be overridden by environment variable
+                    TRACED_SAMPLE_PROB or individual traced decorators.
     """
     try:
         if not isinstance(project, str) or not project.strip():
             raise ValueError("Project name must be a non-empty string")
         
+        # Handle sampling probability hierarchy: env > init_logger
+        global _default_sample_prob
+        env_sample_prob = os.getenv('TRACED_SAMPLE_PROB')
+        if env_sample_prob is not None:
+            try:
+                _default_sample_prob = float(env_sample_prob)
+            except ValueError:
+                log_error(f"Invalid TRACED_SAMPLE_PROB value: {env_sample_prob}. Using default: 1.0")
+        elif sample_prob is not None:
+            _default_sample_prob = float(sample_prob)
+
+        # Validate sampling probability
+        if not 0.0 <= _default_sample_prob <= 1.0:
+            raise ValueError("sample_prob must be between 0.0 and 1.0")
+
         sql_uri = sql_uri or os.getenv(
             'LOGGER_SQL_URI',
             "postgresql+asyncpg://user:password@localhost:5432/experiment_logs"
@@ -1274,16 +1293,20 @@ def traced(_func: Optional[Callable] = None, *,
            type: Optional[str] = None,
            name: Optional[str] = None,
            notrace_io: bool = False,
-           sample_prob: float = 1.0) -> Callable:
+           sample_prob: Optional[float] = None,
+           collect_generator: bool = True) -> Callable:
     """
     Decorator to trace function execution with nested context support.
-
+    
     Args:
-        sample_prob: Float between 0 and 1. Represents the probability of tracing.
-                    E.g. 0.1 means trace 10% of calls, 1.0 means trace all calls.
+        sample_prob: Function-level sampling probability. If provided, overrides both
+                    environment variable and logger-level settings.
     """
+    # Use the hierarchy: function > logger > env
+    effective_sample_prob = sample_prob if sample_prob is not None else _default_sample_prob
+
     # Check for active logger immediately
-    if not _default_logger or sample_prob == 0.0:
+    if not _default_logger or effective_sample_prob == 0.0:
         # Instead of raising an error, return a pass-through decorator
         def passthrough(func: Callable[..., T]) -> Callable[..., T]:
             return func
@@ -1306,7 +1329,7 @@ def traced(_func: Optional[Callable] = None, *,
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
                 # Move sampling check here, inside the wrapper
-                if np.random.random() > sample_prob:
+                if np.random.random() > effective_sample_prob:
                     return await func(*args, **kwargs)
 
                 # 1. kwargs (runtime)
@@ -1387,23 +1410,41 @@ def traced(_func: Optional[Callable] = None, *,
                             span.log_input(input_data)
 
                         result = await func(*args, **kwargs)
-                        serialized_result = serialize_object(result)
-
-                        if isinstance(output_name, list):
-                            if not isinstance(result, (tuple, list)) or len(result) != len(output_name):
-                                raise ValueError(
-                                    f"Expected {len(output_name)} return values for output_names {output_name}, "
-                                    f"but got {type(result)} with {len(result) if isinstance(result, (tuple, list)) else 1} values"
-                                )
-                            output_data = dict(zip(output_name, map(serialize_object, result)))
-                        else:
-                            output_key = output_name or _determine_output_key(func, serialized_result)
+                        
+                        # Handle async generators
+                        if inspect.isasyncgen(result):
+                            collected_results = []
+                            async for item in result:
+                                collected_results.append(item)
+                                yield item  # Still yield each item to the caller
+                            
+                            # Log the collected results
+                            serialized_result = serialize_object(collected_results)
+                            output_key = output_name or "generator_output"
                             output_data = {output_key: serialized_result}
-                        if not notrace_io:
-                            span.log_output(output_data)
-                            if row_token:
-                                log_background(f"Updating row output: {actual_row_id} with {output_data}")
-                                _default_logger.storage.update_row_output(actual_row_id, output_data)
+                            
+                            if not notrace_io:
+                                span.log_output(output_data)
+                                if row_token:
+                                    _default_logger.storage.update_row_output(actual_row_id, output_data)
+                        else:
+                            serialized_result = serialize_object(result)
+
+                            if isinstance(output_name, list):
+                                if not isinstance(result, (tuple, list)) or len(result) != len(output_name):
+                                    raise ValueError(
+                                        f"Expected {len(output_name)} return values for output_names {output_name}, "
+                                        f"but got {type(result)} with {len(result) if isinstance(result, (tuple, list)) else 1} values"
+                                    )
+                                output_data = dict(zip(output_name, map(serialize_object, result)))
+                            else:
+                                output_key = output_name or _determine_output_key(func, serialized_result)
+                                output_data = {output_key: serialized_result}
+                            if not notrace_io:
+                                span.log_output(output_data)
+                                if row_token:
+                                    log_background(f"Updating row output: {actual_row_id} with {output_data}")
+                                    _default_logger.storage.update_row_output(actual_row_id, output_data)
                         span.end()
                         log_background(f"Span ended: {span.name} (ID: {span.id})")
                         return result
@@ -1430,7 +1471,7 @@ def traced(_func: Optional[Callable] = None, *,
             @wraps(func)
             def sync_wrapper(*args, **kwargs):
                 # Move sampling check here, inside the wrapper
-                if np.random.random() > sample_prob:
+                if np.random.random() > effective_sample_prob:
                     return func(*args, **kwargs)
                 # Synchronous version of the wrapper
 
@@ -1512,23 +1553,58 @@ def traced(_func: Optional[Callable] = None, *,
                             span.log_input(input_data)
 
                         result = func(*args, **kwargs)
-                        serialized_result = serialize_object(result)
-
-                        if isinstance(output_name, list):
-                            if not isinstance(result, (tuple, list)) or len(result) != len(output_name):
-                                raise ValueError(
-                                    f"Expected {len(output_name)} return values for output_names {output_name}, "
-                                    f"but got {type(result)} with {len(result) if isinstance(result, (tuple, list)) else 1} values"
-                                )
-                            output_data = dict(zip(output_name, map(serialize_object, result)))
+                        
+                        # Handle generators
+                        if inspect.isgenerator(result):
+                            if collect_generator:
+                                # Collect all values into a list
+                                collected_results = []
+                                for item in result:
+                                    collected_results.append(item)
+                                    yield item  # Still yield each item to the caller
+                                
+                                # Log the collected results
+                                serialized_result = serialize_object(collected_results)
+                                output_key = output_name or "generator_output"
+                                output_data = {output_key: serialized_result}
+                                
+                                if not notrace_io:
+                                    span.log_output(output_data)
+                                    if row_token:
+                                        _default_logger.storage.update_row_output(actual_row_id, output_data)
+                            else:
+                                # Log each yielded value separately
+                                output_key = output_name or "generator_output"
+                                collected_results = []
+                                for item in result:
+                                    collected_results.append(item)
+                                    if not notrace_io:
+                                        span.log_output({output_key: serialize_object(item)})
+                                    yield item
+                                
+                                # Final update with all results
+                                if not notrace_io and row_token:
+                                    _default_logger.storage.update_row_output(
+                                        actual_row_id, 
+                                        {output_key: serialize_object(collected_results)}
+                                    )
                         else:
-                            output_key = output_name or _determine_output_key(func, serialized_result)
-                            output_data = {output_key: serialized_result}
-                        if not notrace_io:
-                            span.log_output(output_data)
-                            if row_token:
-                                log_background(f"Updating row output: {actual_row_id} with {output_data}")
-                                _default_logger.storage.update_row_output(actual_row_id, output_data)
+                            serialized_result = serialize_object(result)
+                            if isinstance(output_name, list):
+                                if not isinstance(result, (tuple, list)) or len(result) != len(output_name):
+                                    raise ValueError(
+                                        f"Expected {len(output_name)} return values for output_names {output_name}, "
+                                        f"but got {type(result)} with {len(result) if isinstance(result, (tuple, list)) else 1} values"
+                                    )
+                                output_data = dict(zip(output_name, map(serialize_object, result)))
+                            else:
+                                output_key = output_name or _determine_output_key(func, serialized_result)
+                                output_data = {output_key: serialized_result}
+                            if not notrace_io:
+                                span.log_output(output_data)
+                                if row_token:
+                                    log_background(f"Updating row output: {actual_row_id} with {output_data}")
+                                    _default_logger.storage.update_row_output(actual_row_id, output_data)
                         span.end()
                         log_background(f"Span ended: {span.name} (ID: {span.id})")
                         return result
