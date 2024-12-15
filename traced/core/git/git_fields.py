@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from traced.core.utils.serializable_data_class import SerializableDataClass
+from ..utils.serializable_data_class import SerializableDataClass
 
 
 @dataclass

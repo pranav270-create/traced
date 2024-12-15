@@ -27,9 +27,9 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from traced.core.logger_model import Experiment, Row, SpanModel, feedback_assignments, FeedbackModel, FeedbackTemplate, Project, Prompt, Scorer
-from traced.backend.schemas.eval_schemas import ExperimentSchema, RowSchema, SpanSchema
-from traced.backend.database import get_db
+from ...core.logger_model import Experiment, Row, SpanModel, feedback_assignments, FeedbackModel, FeedbackTemplate, Project, Prompt, Scorer
+from ..schemas.eval_schemas import ExperimentSchema, RowSchema, SpanSchema
+from ..database import get_db
 
 router = APIRouter()
 

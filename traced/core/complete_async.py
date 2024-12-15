@@ -29,12 +29,10 @@ from string import Formatter
 import hashlib
 import numpy as np
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
-
-from context import current_row_id, current_span_id, current_span, current_experiment_id, current_project_id, current_experiment_name
-from utils.serialization import serialize_object
-from git.gitutil import get_repo_info, GitMetadataSettings
-from traced.core.logger_model import (
+from .context import current_row_id, current_span_id, current_span, current_experiment_id, current_project_id, current_experiment_name
+from .utils.serialization import serialize_object
+from .git.gitutil import get_repo_info, GitMetadataSettings
+from .logger_model import (
     Experiment, Row, SpanModel, AttachmentModel, FeedbackModel, Project, Prompt, experiment_prompts, span_prompts
 )
 

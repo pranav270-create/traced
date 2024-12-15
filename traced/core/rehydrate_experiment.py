@@ -4,14 +4,11 @@ from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 from sqlalchemy import select, text
 from sqlalchemy.orm import joinedload
-import sys
-from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from traced.core.utils.serialization import serialize_object
-from traced.backend.database import get_async_session_maker, get_database_url
-from traced.core.logger_model import Experiment, Row, SpanModel
+from .utils.serialization import serialize_object
+from ..backend.database import get_async_session_maker
+from .logger_model import Experiment, Row, SpanModel
 
 
 class ExperimentRehydrator:
